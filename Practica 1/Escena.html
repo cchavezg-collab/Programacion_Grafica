@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<head>
+</head>
+<body>
+    <canvas id="webglcanvas" style="border:none" width="500" height="500"></canvas>   
+    <script id="vs" type="vertex">
+        #version 300 es
+        layout (location = 0) in vec2 aVertices; 
+        void main() {
+            gl_Position = vec4(aVertices, 0.0, 1.0);
+        }
+    </script>
+    <script id="fs" type="fragment">
+        #version 300 es
+        precision mediump float;
+        uniform vec4 uColor; 
+        out vec4 color;
+        void main() {
+            color = uColor;
+        }
+    </script>
+    <script>
+        function main(){
+            var canvas = document.getElementById("webglcanvas");
+            var gl = canvas.getContext("webgl2");
+
+            gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+            // SHADERS
+            var vs = gl.createShader(gl.VERTEX_SHADER);
+            gl.shaderSource(vs, document.getElementById("vs").text.trim());
+            gl.compileShader(vs);
+
+            var fs = gl.createShader(gl.FRAGMENT_SHADER);
+            gl.shaderSource(fs, document.getElementById("fs").text.trim());
+            gl.compileShader(fs);
+
+            var prog = gl.createProgram();
+            gl.attachShader(prog, vs); 
+            gl.attachShader(prog, fs);
+            gl.linkProgram(prog);
+            gl.useProgram(prog);
+
+            // ------------------ FUNCIONES AUXILIARES ------------------
+            function addCircle(cx, cy, r, numSeg=40){
+                let verts = [cx, cy];
+                for (let i = 0; i <= numSeg; i++){
+                    let ang = i * 2 * Math.PI / numSeg;
+                    verts.push(cx + r * Math.cos(ang));
+                    verts.push(cy + r * Math.sin(ang));
+                }
+                return verts;
+            }
+
+            function addSunRays(cx, cy, rInner, rOuter, numRays=12){
+                let verts = [];
+                for (let i=0; i<numRays; i++){
+                    let ang = i * 2 * Math.PI / numRays;
+                    let x1 = cx + rInner * Math.cos(ang);
+                    let y1 = cy + rInner * Math.sin(ang);
+                    let x2 = cx + rOuter * Math.cos(ang - 0.1);
+                    let y2 = cy + rOuter * Math.sin(ang - 0.1);
+                    let x3 = cx + rOuter * Math.cos(ang + 0.1);
+                    let y3 = cy + rOuter * Math.sin(ang + 0.1);
+                    verts.push(x1,y1, x2,y2, x3,y3);
+                }
+                return verts;
+            }
+
+            // ------------------ VERTICES PRINCIPALES ------------------
+            var vertices = [];
+
+            // Césped
+            vertices.push(-1,-1, 1,-1, 1,-0.6, -1,-0.6);
+
+            // Muralla
+            vertices.push(-0.4,-0.6, 0.4,-0.6, 0.4,0.2, -0.4,0.2);
+
+            // Puerta
+            vertices.push(-0.1,-0.6, 0.1,-0.6, 0.1,-0.2, -0.1,-0.2);
+
+            // Torres y techos
+            vertices.push(-0.7,-0.6, -0.55,-0.6, -0.55,0.3, -0.7,0.3); // torre izq
+            vertices.push(-0.725,0.3, -0.525,0.3, -0.625,0.5);         // techo izq
+            vertices.push(0.55,-0.6, 0.7,-0.6, 0.7,0.3, 0.55,0.3);     // torre der
+            vertices.push(0.525,0.3, 0.725,0.3, 0.625,0.5);            // techo der
+
+            // Árboles
+            vertices.push(-0.9,-0.6, -0.85,-0.6, -0.85,-0.3, -0.9,-0.3); // tronco izq
+            vertices = vertices.concat(addCircle(-0.875,0.0,0.15));       // copa izq
+            vertices.push(0.85,-0.6, 0.9,-0.6, 0.9,-0.3, 0.85,-0.3);      // tronco der
+            vertices = vertices.concat(addCircle(0.875,0.0,0.15));        // copa der
+
+            // Camino de piedras
+            vertices.push(-0.1,-0.6, 0.1,-0.6, 0,-0.75);
+            vertices.push(-0.15,-0.75, 0.15,-0.75, 0,-0.9);
+
+            // Sol redondo + rayos
+            let sun = addCircle(-0.7,0.75,0.12);
+            let rays = addSunRays(-0.7,0.75,0.12,0.2,16);
+            vertices = vertices.concat(sun).concat(rays);
+
+            // Nubes (varios círculos pegados)
+            vertices = vertices.concat(addCircle(-0.2,0.7,0.08));
+            vertices = vertices.concat(addCircle(-0.1,0.7,0.1));
+            vertices = vertices.concat(addCircle(0.0,0.7,0.08));
+
+            vertices = vertices.concat(addCircle(0.5,0.7,0.08));
+            vertices = vertices.concat(addCircle(0.6,0.7,0.1));
+            vertices = vertices.concat(addCircle(0.7,0.7,0.08));
+
+            // ------------------ BUFFER ------------------
+            var vao = gl.createVertexArray();
+            gl.bindVertexArray(vao);
+
+            var buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(0);
+            gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+
+            gl.clearColor(0.6,0.8,1.0,1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            var uColor = gl.getUniformLocation(prog,"uColor");
+            let offset=0;
+
+            // Césped
+            gl.uniform4f(uColor,0,0.6,0,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,4); offset+=4;
+
+            // Muralla
+            gl.uniform4f(uColor,0.7,0.7,0.7,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,4); offset+=4;
+
+            // Puerta
+            gl.uniform4f(uColor,0.4,0.2,0,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,4); offset+=4;
+
+            // Torre izq
+            gl.uniform4f(uColor,0.6,0.6,0.6,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,4); offset+=4;
+            gl.uniform4f(uColor,0.8,0,0,1);
+            gl.drawArrays(gl.TRIANGLES,offset,3); offset+=3;
+
+            // Torre der
+            gl.uniform4f(uColor,0.6,0.6,0.6,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,4); offset+=4;
+            gl.uniform4f(uColor,0.8,0,0,1);
+            gl.drawArrays(gl.TRIANGLES,offset,3); offset+=3;
+
+            // Tronco izq
+            gl.uniform4f(uColor,0.4,0.2,0,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,4); offset+=4;
+            // Copa izq
+            gl.uniform4f(uColor,0,0.5,0,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,42); offset+=42;
+
+            // Tronco der
+            gl.uniform4f(uColor,0.4,0.2,0,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,4); offset+=4;
+            // Copa der
+            gl.uniform4f(uColor,0,0.5,0,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,42); offset+=42;
+
+            // Camino
+            gl.uniform4f(uColor,0.5,0.5,0.5,1);
+            gl.drawArrays(gl.TRIANGLES,offset,3); offset+=3;
+            gl.drawArrays(gl.TRIANGLES,offset,3); offset+=3;
+
+            // Sol redondo
+            gl.uniform4f(uColor,1,1,0,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,42); offset+=42;
+            // Rayos
+            gl.drawArrays(gl.TRIANGLES,offset,16*3); offset+=16*3;
+
+            // Nubes
+            gl.uniform4f(uColor,1,1,1,1);
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,42); offset+=42;
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,42); offset+=42;
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,42); offset+=42;
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,42); offset+=42;
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,42); offset+=42;
+            gl.drawArrays(gl.TRIANGLE_FAN,offset,42); offset+=42;
+
+            gl.bindVertexArray(null);
+        }
+        window.onload = main;
+    </script>
+</body>
+</html>
+
