@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<head>
+</head>
+<body>
+    <canvas id="webglcanvas" style="border: none" width="500" height="500"></canvas>
+    <div style="text-align:center; margin-top:8px;">
+      Puntaje: <span id="score">0</span>
+      <button id="btnRestart">Reiniciar</button>
+    </div>
+
+    <!-- Sonidos -->
+    <audio id="sndEat">
+      <source src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg" type="audio/ogg">
+    </audio>
+    <audio id="sndCrash">
+      <source src="https://actions.google.com/sounds/v1/human_voices/failure_alert.ogg" type="audio/ogg">
+    </audio>
+
+     <script id="vs" type="vertex">
+        #version 300 es
+        uniform mat4 uMatrizProyeccion;
+        uniform mat4 uMatrizVista;
+        uniform mat4 uMatrizModelo;
+        layout(location = 0) in vec2 aVertices;
+        void main() {
+            gl_Position = uMatrizProyeccion * uMatrizVista * uMatrizModelo * vec4(aVertices, 0.0, 1.0);
+        }
+      </script>
+
+      <script id="fs" type="fragment">
+        #version 300 es
+        precision mediump float;
+        uniform vec4 uColor;
+        out vec4 color;
+        void main() {
+            color = uColor;
+        }
+      </script>
+    <script>
+        
+        function identidad(r) {
+            r[0] = 1; r[4] = 0; r[ 8] = 0; r[12] = 0;
+            r[1] = 0; r[5] = 1; r[ 9] = 0; r[13] = 0;
+            r[2] = 0; r[6] = 0; r[10] = 1; r[14] = 0;
+            r[3] = 0; r[7] = 0; r[11] = 0; r[15] = 1;
+        }
+        function traslacion(matriz, tx, ty, tz) {
+          let r = new Array(16);
+          r[0] = 1; r[4] = 0; r[ 8] = 0; r[12] = tx;
+          r[1] = 0; r[5] = 1; r[ 9] = 0; r[13] = ty;
+          r[2] = 0; r[6] = 0; r[10] = 1; r[14] = tz;
+          r[3] = 0; r[7] = 0; r[11] = 0; r[15] =  1;
+          multiplica(matriz, matriz, r);
+        }
+        function rotacionZ(matriz, ang) {
+          let c = Math.cos(ang), s = Math.sin(ang);
+          let r = new Array(16);
+          r[0] = c;  r[4] = -s; r[ 8] = 0; r[12] = 0;
+          r[1] = s;  r[5] =  c; r[ 9] = 0; r[13] = 0;
+          r[2] = 0;  r[6] =  0; r[10] = 1; r[14] = 0;
+          r[3] = 0;  r[7] =  0; r[11] = 0; r[15] = 1;
+          multiplica(matriz, matriz, r);
+        }
+        function escalacion(matriz, sx, sy, sz) {
+          let r = new Array(16);
+          r[0] = sx; r[4] =  0; r[ 8] =  0; r[12] =  0;
+          r[1] =  0; r[5] = sy; r[ 9] =  0; r[13] =  0;
+          r[2] =  0; r[6] =  0; r[10] = sz; r[14] =  0;
+          r[3] =  0; r[7] =  0; r[11] =  0; r[15] =  1;
+          multiplica(matriz, matriz, r);
+        }
+        function ortho(r, izq, der, abj, arr, cerca, lejos) {
+            r[0] = 2/(der - izq); r[4] =             0; r[ 8] =                  0; r[12] =         -(der + izq)/(der - izq);
+            r[1] =             0; r[5] = 2/(arr - abj); r[ 9] =                  0; r[13] =         -(arr + abj)/(arr - abj);
+            r[2] =             0; r[6] =             0; r[10] = -2/(lejos - cerca); r[14] = -(lejos + cerca)/(lejos - cerca);
+            r[3] =             0; r[7] =             0; r[11] =                  0; r[15] =                                1;
+        }
+        function multiplica(c, a, b) {
+          let r = new Array(16);
+          for (let i = 0; i < 4; i++){
+            for (let j = 0; j < 4; j++){
+              let s = 0;
+              for (let k = 0; k < 4; k++)
+                s += a[i + k * 4] * b[k + j * 4];
+              r[i + j * 4] = s;
+            }
+          }
+          for (let i = 0; i < 16; i++)
+            c[i] = r[i];
+        }
+
+        
+        let canvas = document.getElementById("webglcanvas");
+        let gl = canvas.getContext("webgl2");
+
+        let vaoFrame, vaoInner, vaoRect, vaoCell;
+        let uColor, uMatrizProyeccion, uMatrizVista, uMatrizModelo;
+        let MatrizProyeccion = new Array(16);
+        let MatrizVista = new Array(16);
+        let MatrizModelo = new Array(16);
+
+        // parámetros de fondo y área de juego 
+        const outerHalf = 4.0;
+        const innerHalf = 3.0;
+
+        // GRID dentro del cuadrado interior — se mapeará a [-innerHalf, innerHalf]
+        const GRID_SIZE = 12; // 12x12 
+        const CELL_WORLD = (innerHalf * 2) / GRID_SIZE; // tamaño de cada celda en coordenadas mundo
+        const GRID_LEFT = -innerHalf + CELL_WORLD/2;
+        const GRID_TOP =  innerHalf - CELL_WORLD/2;
+
+        // estado del snake
+        let snake = []; // array de {x:col, y:row}
+        let dir = {x:1, y:0};       // dirección actual
+        let pendingDir = null;      // dirección a aplicar en el próximo tick
+        let food = null;            // {x,y}
+        let tickInterval = 400;     // ms por movimiento
+        let tickHandle = null;
+        let running = false;
+        let score = 0;
+
+        // shaders 
+        function compilarShader(type, source){
+          const sh = gl.createShader(type);
+          gl.shaderSource(sh, source);
+          gl.compileShader(sh);
+          return sh;
+        }
+        const vsSource = document.getElementById("vs").text.trim();
+        const fsSource = document.getElementById("fs").text.trim();
+        const vs = compilarShader(gl.VERTEX_SHADER, vsSource);
+        const fs = compilarShader(gl.FRAGMENT_SHADER, fsSource);
+        const program = gl.createProgram();
+        gl.attachShader(program, vs); gl.attachShader(program, fs); gl.linkProgram(program); gl.useProgram(program);
+
+        uColor = gl.getUniformLocation(program, "uColor");
+        uMatrizProyeccion = gl.getUniformLocation(program, "uMatrizProyeccion");
+        uMatrizVista = gl.getUniformLocation(program, "uMatrizVista");
+        uMatrizModelo = gl.getUniformLocation(program, "uMatrizModelo");
+
+        /* --- Geometrías de la escena (frame + inner cuadrado)  --- */
+        function creaFrame(){
+          const v = new Float32Array([
+            -outerHalf, -outerHalf,
+             outerHalf, -outerHalf,
+             outerHalf,  outerHalf,
+            -outerHalf,  outerHalf
+          ]);
+          vaoFrame = gl.createVertexArray();
+          gl.bindVertexArray(vaoFrame);
+          let buf = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+          gl.bufferData(gl.ARRAY_BUFFER, v, gl.STATIC_DRAW);
+          gl.enableVertexAttribArray(0);
+          gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+          vaoFrame.count = 4;
+          gl.bindVertexArray(null);
+        }
+        function creaInner(){
+          const s = innerHalf;
+          const v = new Float32Array([-s,-s, s,-s, s,s, -s,s]);
+          vaoInner = gl.createVertexArray();
+          gl.bindVertexArray(vaoInner);
+          let buf = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+          gl.bufferData(gl.ARRAY_BUFFER, v, gl.STATIC_DRAW);
+          gl.enableVertexAttribArray(0);
+          gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+          vaoInner.count = 4;
+          gl.bindVertexArray(null);
+        }
+
+        /* --- VAO para la celda / segmento del snake (unit square centrado) --- */
+        function creaCell(){
+          const v = new Float32Array([
+            -0.5, -0.5,
+             0.5, -0.5,
+             0.5,  0.5,
+            -0.5,  0.5
+          ]);
+          vaoCell = gl.createVertexArray();
+          gl.bindVertexArray(vaoCell);
+          let buf = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+          gl.bufferData(gl.ARRAY_BUFFER, v, gl.STATIC_DRAW);
+          gl.enableVertexAttribArray(0);
+          gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+          vaoCell.count = 4;
+          gl.bindVertexArray(null);
+        }
+
+        creaFrame(); creaInner(); creaCell();
+
+        // proyección y vista 
+        ortho(MatrizProyeccion,-5,5,-5,5,-1,1);
+        gl.uniformMatrix4fv(uMatrizProyeccion,false,MatrizProyeccion);
+        identidad(MatrizVista);
+        gl.uniformMatrix4fv(uMatrizVista,false,MatrizVista);
+
+        /* ------------------ UTILIDADES JUEGO ------------------ */
+        function cellToWorld(col, row){
+          const wx = GRID_LEFT + col * CELL_WORLD;
+          const wy = GRID_TOP - row * CELL_WORLD;
+          return {x: wx, y: wy};
+        }
+
+        function spawnFood(){
+          // coloca en celda aleatoria que no choque con snake
+          while(true){
+            const fx = Math.floor(Math.random() * GRID_SIZE);
+            const fy = Math.floor(Math.random() * GRID_SIZE);
+            const hit = snake.some(s => s.x === fx && s.y === fy);
+            if(!hit){
+              food = {x: fx, y: fy};
+              return;
+            }
+          }
+        }
+
+        function resetGame(){
+          // iniciar snake en el centro
+          snake = [];
+          const mid = Math.floor(GRID_SIZE/2);
+          snake.push({x: mid-1, y: mid});
+          snake.push({x: mid,   y: mid});
+          snake.push({x: mid+1, y: mid});
+          dir = {x:1, y:0};
+          pendingDir = null;
+          spawnFood();
+          score = 0;
+          running = true;
+          document.getElementById('score').textContent = score;
+          // iniciar tick
+          if(tickHandle) clearInterval(tickHandle);
+          tickHandle = setInterval(gameTick, tickInterval);
+          document.getElementById('btnRestart').disabled = true;
+        }
+
+        function gameOver(){
+          running = false;
+          if(tickHandle){ clearInterval(tickHandle); tickHandle = null; }
+          document.getElementById('btnRestart').disabled = false;
+          // reproducir sonido crash 
+          try { let s = document.getElementById('sndCrash'); s.currentTime = 0; s.play(); }catch(e){}
+          alert("Game over — Puntaje: " + score);
+        }
+
+        function gameTick(){
+          if(!running) return;
+          // aplicar pendingDir si no es reverso
+          if(pendingDir){
+            if(!(pendingDir.x === -dir.x && pendingDir.y === -dir.y)){
+              dir = pendingDir;
+            }
+            pendingDir = null;
+          }
+          const head = snake[snake.length - 1];
+          const newHead = {x: head.x + dir.x, y: head.y + dir.y};
+
+          // choque con pared
+          if(newHead.x < 0 || newHead.x >= GRID_SIZE || newHead.y < 0 || newHead.y >= GRID_SIZE){
+            gameOver();
+            return;
+          }
+
+          // choque consigo mismo
+          if(snake.some(s => s.x === newHead.x && s.y === newHead.y)){
+            gameOver();
+            return;
+          }
+
+          // añadir cabeza
+          snake.push(newHead);
+
+          // come
+          if(food && newHead.x === food.x && newHead.y === food.y){
+            score += 10;
+            document.getElementById('score').textContent = score;
+            // reproducir sonido comer 
+            try { let s = document.getElementById('sndEat'); s.currentTime = 0; s.play(); }catch(e){}
+            spawnFood();
+            // no hacer shift => crece
+          } else {
+            // movimiento normal -> quitar cola
+            snake.shift();
+          }
+
+          // condición extra: si snake muy grande y se choca a si misma  -> game over
+      
+        }
+
+        /* ------------------ DIBUJAR (draw) ------------------ */
+        function dibuja(){
+          // fondo rosado
+          gl.clearColor(1.0, 0.85, 0.93, 1.0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+
+          // dibujar marco (línea)
+          identidad(MatrizModelo);
+          gl.uniformMatrix4fv(uMatrizModelo,false,MatrizModelo);
+          gl.uniform4f(uColor,1,0,1,0);
+          gl.bindVertexArray(vaoFrame);
+          gl.drawArrays(gl.LINE_LOOP,0,vaoFrame.count);
+          gl.bindVertexArray(null);
+
+          // dibujar cuadrado interior (área de juego)
+          identidad(MatrizModelo);
+          gl.uniformMatrix4fv(uMatrizModelo,false,MatrizModelo);
+          gl.uniform4f(uColor,0, 0, 0., 1); // negro
+          gl.bindVertexArray(vaoInner);
+          gl.drawArrays(gl.TRIANGLE_FAN,0,vaoInner.count);
+          gl.bindVertexArray(null);
+
+          
+
+          // dibujar snake (cada segmento usa vaoCell escalado y trasladado)
+          gl.bindVertexArray(vaoCell);
+          for(let i=0;i<snake.length;i++){
+            const seg = snake[i];
+            const wpos = cellToWorld(seg.x, seg.y);
+            identidad(MatrizModelo);
+            traslacion(MatrizModelo, wpos.x, wpos.y, 0);
+            // escala a CELL_WORLD * 0.9 para dejar espacio entre celdas
+            escalacion(MatrizModelo, CELL_WORLD * 0.9, CELL_WORLD * 0.9, 1);
+            gl.uniformMatrix4fv(uMatrizModelo,false,MatrizModelo);
+            if(i === snake.length-1){
+              // cabeza: color rosado 
+              gl.uniform4f(uColor, 0.95, 0.35, 0.6, 1.0);
+            } else {
+              // cuerpo: verde
+              gl.uniform4f(uColor, 0.15, 0.65, 0.2, 1.0);
+            }
+            gl.drawArrays(gl.TRIANGLE_FAN, 0, vaoCell.count);
+          }
+          gl.bindVertexArray(null);
+
+          // dibujar la comida (usa la misma VAO)
+          if(food){
+            const fpos = cellToWorld(food.x, food.y);
+            gl.bindVertexArray(vaoCell);
+            identidad(MatrizModelo);
+            traslacion(MatrizModelo, fpos.x, fpos.y, 0);
+            escalacion(MatrizModelo, CELL_WORLD * 0.6, CELL_WORLD * 0.6, 1);
+            gl.uniformMatrix4fv(uMatrizModelo,false,MatrizModelo);
+            gl.uniform4f(uColor, 1.0, 0.9, 0.0, 1.0); // amarillo
+            gl.drawArrays(gl.TRIANGLE_FAN, 0, vaoCell.count);
+            gl.bindVertexArray(null);
+          }
+
+          // actualiza cada frame
+          requestAnimationFrame(dibuja);
+        }
+
+        /* ------------------ CONTROLES DEL TECLADO ------------------ */
+        window.addEventListener('keydown', function(e){
+          if(!running && e.key !== 'Enter') return; // si terminó, solo Enter o botón reinicio
+          // flechas y WASD
+          if(e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W'){
+            pendingDir = {x:0, y:-1};
+            e.preventDefault();
+          } else if(e.key === 'ArrowDown' || e.key === 's' || e.key === 'S'){
+            pendingDir = {x:0, y:1};
+            e.preventDefault();
+          } else if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A'){
+            pendingDir = {x:-1, y:0};
+            e.preventDefault();
+          } else if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D'){
+            pendingDir = {x:1, y:0};
+            e.preventDefault();
+          } else if(!running && e.key === 'Enter'){
+            // reiniciar con Enter
+            resetGame();
+          }
+        }, false);
+
+        /* ------------------ INICIALIZACIÓN y ARRANQUE ------------------ */
+        // bind botón reiniciar
+        document.getElementById('btnRestart').addEventListener('click', function(){
+          resetGame();
+          document.getElementById('btnRestart').disabled = true;
+        });
+
+        // arrancar loop de dibujado y juego
+        dibuja(); 
+        resetGame(); 
+    </script>
+</body>
+</html>
+
+
