@@ -1,0 +1,469 @@
+﻿<!DOCTYPE HTML>
+<html>
+<head>
+      <title>Textura 2D en WebGL 2.0</title>
+      <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+</head>
+<body>
+      <canvas id="webglcanvas" style="border: none;" width="500" height="500"></canvas>
+      <img src="fish1.png" id="imagenPez" hidden />
+      <img src="fish2.png" id="imagenPezDos" hidden />
+      <img src="fish1.png" id="imagenPezTres" hidden />
+      <img src="fish2.png" id="imagenPezCuatro" hidden />
+      <img src="langosta.png" id="imagenLangosta" hidden />
+      <img src="concha.png" id="imagenConcha" hidden />
+      <img src="fondo1.png" id="imagenFondo" hidden />
+      <img src="burbuja1.png" id="imagenBurbuja" hidden /> 
+      
+
+<script id="vs" type="vertex">
+        #version 300 es
+        precision mediump float;
+        uniform mat4 uMatrizProyeccion;
+        uniform mat4 uMatrizVista;
+        uniform mat4 uMatrizModelo;
+        uniform mat4 uMatrizTextura;
+        layout(location = 0) in vec2 aVertices;
+        layout(location = 1) in vec2 aCoordenadasDeTextura;
+        out vec2 vCoordenadasDeTextura;
+        void main() {
+            vCoordenadasDeTextura = (uMatrizTextura * vec4 (aCoordenadasDeTextura, 0.0, 1.0)).xy;
+            gl_Position = uMatrizProyeccion * uMatrizVista * uMatrizModelo * vec4(aVertices, 0.0, 1.0);
+        }
+      </script>
+
+      <script id="fs" type="fragment">
+        #version 300 es
+        precision mediump float;
+        uniform sampler2D uUnidadDeTextura;
+        in vec2 vCoordenadasDeTextura;
+        out vec4 color;
+        void main() {
+            color = texture(uUnidadDeTextura, vCoordenadasDeTextura); 
+        }
+      </script>
+ 
+      <script>
+        "use strict";
+
+        /***************************************************************************/
+        /* Transformaciones mediante matrices                          */
+        /***************************************************************************/
+
+        /* Convierte de grados a radianes */
+        function toRadians(grados) {
+          return grados * Math.PI / 180;
+        };
+
+        /* Matriz Identidad */
+        function identidad(r) {
+          r[0] = 1; r[4] = 0; r[ 8] = 0; r[12] = 0;
+          r[1] = 0; r[5] = 1; r[ 9] = 0; r[13] = 0;
+          r[2] = 0; r[6] = 0; r[10] = 1; r[14] = 0;
+          r[3] = 0; r[7] = 0; r[11] = 0; r[15] = 1;
+        }
+
+        /* Traslación - glTranslatef */
+        function traslacion(matriz, tx, ty, tz) {
+          let r = new Array(16);
+          r[0] = 1; r[4] = 0; r[ 8] = 0; r[12] = tx;
+          r[1] = 0; r[5] = 1; r[ 9] = 0; r[13] = ty;
+          r[2] = 0; r[6] = 0; r[10] = 1; r[14] = tz;
+          r[3] = 0; r[7] = 0; r[11] = 0; r[15] =  1;
+          multiplica(matriz, matriz, r);
+        }
+
+        /* Escalación - glScalef */
+        function escalacion(matriz, sx, sy, sz) { 
+          let r = new Array(16);
+          r[0] = sx; r[4] =  0; r[ 8] =  0; r[12] =  0;
+          r[1] =  0; r[5] = sy; r[9] =  0; r[13] =  0;
+          r[2] =  0; r[6] =  0; r[10] = sz; r[14] =  0;
+          r[3] =  0; r[7] =  0; r[11] =  0; r[15] =  1;
+          multiplica(matriz, matriz, r);
+        }
+
+        /* Rotación sobre Y - glRotatef */
+        function rotacionY(matriz, theta){
+            let r = new Array(16);
+            let c = Math.cos(toRadians(theta));
+            let s = Math.sin(toRadians(theta));
+            r[0] =  c; r[4] =  0; r[ 8] =  s; r[12] = 0;
+            r[1] =  0; r[5] =  1; r[9] =  0; r[13] = 0;
+            r[2] = -s; r[6] =  0; r[10] =  c; r[14] = 0;
+            r[3] =  0; r[7] =  0; r[11] =  0; r[15] = 1;
+            multiplica(matriz, matriz, r);
+        }
+
+        /* Proyección Paralela - glOrtho */
+        function ortho(r, izq, der, abj, arr, cerca, lejos) {
+          r[0] = 2/(der - izq); r[4] =             0; r[ 8] =              0; r[12] =          -(der + izq)/(der - izq);
+          r[1] =            0; r[5] = 2/(arr - abj); r[ 9] =              0; r[13] =          -(arr + abj)/(arr - abj);
+          r[2] =            0; r[6] =            0; r[10] = -2/(lejos - cerca); r[14] = -(lejos + cerca)/(lejos - cerca);
+          r[3] =            0; r[7] =            0; r[11] =              0; r[15] =                                 1;
+        }
+
+        /* Multiplicación de matrices de 4 x 4 */
+        function multiplica(c, a, b) {
+          let r = new Array(16);
+          let i, j, k;
+          for (i = 0; i < 4; i++){
+            for (j = 0; j < 4; j++){
+              let s = 0;
+              for (k = 0; k < 4; k++)
+                s = s + a[i + k * 4] * b[k + j * 4];
+                r[i + j * 4] = s;
+              }
+            }
+          for (i = 0; i < 16; i++)
+            c[i] = r[i];
+        }
+
+        /* Variables globales */
+        let gl;
+        let programaID;
+        let codigoDePez, codigoDePezDos, codigoDePezTres, codigoDePezCuatro,codigoDeLangosta, codigoDeConcha, codigoDeFondo, codigoDeBurbuja; 
+        let codigoDeEstrella;
+
+        /* Variables Uniformes */
+        let uMatrizProyeccion;
+        let uMatrizVista;
+        let uMatrizModelo;
+        let uUnidadDeTextura;
+        let uMatrizTextura;
+
+        /* Matrices */
+        let MatrizProyeccion = new Array(16);
+        let MatrizVista = new Array(16);
+        let MatrizModelo = new Array(16);
+        let MatrizTextura = new Array(16);
+
+        let rectanguloVAO;
+
+        const FRAME_DURATION = 0.04; // Duración de cada frame en segundos
+        const NUM_BURBUJAS = 50; // Cantidad de burbujas
+        let burbujas = []; // Array para almacenar los objetos de las burbujas
+
+        // Variables de estado para cada sprite.
+        // Todos los peces miran hacia la izquierda y se mueven en esa dirección
+        let pez = { x: 4, y: 2, velocidadX: 5, frameActual: 0, tiempoFrame: 0, ancho: 2.0, alto: 1.5, direccionX: -1, numFrames: 4 }; 
+        let pezDos = { x: -5, y: -1, velocidadX: 7, frameActual: 0, tiempoFrame: 0, ancho: 1.9, alto: 1.7, direccionX: -1, numFrames: 4 }; 
+        let pezTres = { x: 6, y: -0, velocidadX: 8, frameActual: 0, tiempoFrame: 0, ancho: 2.3, alto: 1.9, direccionX: -1, numFrames: 4 };
+        let pezCuatro = { x: -6, y: -2.5, velocidadX: 6, frameActual: 0, tiempoFrame: 0, ancho: 2.0, alto: 1.7, direccionX: -1, numFrames: 4 };
+
+
+        let langosta = { x: 0, y: -3.5, velocidadX: 4, frameActual: 0, tiempoFrame: 0, ancho: 1.5, alto: 1.0, direccionX: 1, numFrames: 6 }; 
+        let concha = { x: 3.5, y: -4, velocidadX: 0, frameActual: 0, tiempoFrame: 0, ancho: 1.0, alto: 1.0, direccionX: 1, numFrames: 4 }; 
+
+        let tiempoAnterior = 0;
+
+        function dibujarSprite(sprite, codigoTextura) {
+            let deltaTiempo = (performance.now() - tiempoAnterior) / 1000.0;
+            
+            // Lógica de Movimiento y Animación para Sprites NO Burbujas
+            if (codigoTextura !== codigoDeBurbuja) { 
+    sprite.x += sprite.velocidadX * sprite.direccionX * deltaTiempo;
+
+    // 🐠 Movimiento de peces: se mueven hacia la izquierda y reaparecen por la derecha
+    // 🐠 Movimiento de los peces
+if (codigoTextura === codigoDePez || codigoTextura === codigoDePezDos || codigoTextura === codigoDePezTres|| codigoTextura === codigoDePezCuatro) {
+    sprite.x += -Math.abs(sprite.velocidadX) * deltaTiempo; // todos van hacia la izquierda, siempre igual
+
+    if (sprite.x < -5 - sprite.ancho / 2) { 
+        sprite.x = 5 + sprite.ancho / 2;          // reaparece desde la derecha
+        sprite.y = Math.random() * 6 - 3;         // altura aleatoria
+    }
+}
+
+    // 🦞 Movimiento de la langosta: rebote dentro de los bordes
+    else if (codigoTextura === codigoDeLangosta) {
+        if ((sprite.x > 4 && sprite.direccionX === 1) || (sprite.x < -4 && sprite.direccionX === -1)) { 
+            sprite.direccionX *= -1; // rebote horizontal
+        }
+    }
+
+    // 🐚 Animación (válida para peces, langosta y concha)
+    sprite.tiempoFrame += deltaTiempo;
+    if (sprite.tiempoFrame >= FRAME_DURATION) {
+        sprite.frameActual = (sprite.frameActual + 1) % sprite.numFrames;
+        sprite.tiempoFrame -= FRAME_DURATION;
+    }
+}
+
+
+            // Lógica para Burbujas (movimiento vertical y reinicio)
+            else { 
+                sprite.y += sprite.velocidadY * deltaTiempo;
+                if (sprite.y > 5 + sprite.alto / 2) { 
+                    sprite.y = -5 - sprite.alto / 2;
+                    sprite.x = Math.random() * 10 - 5; 
+                    sprite.velocidadY = Math.random() * (0.8 - 0.3) + 0.3; 
+                    // Tamaño de burbuja ajustado, por ejemplo, de 0.3 a 1.0
+                    sprite.ancho = sprite.alto = Math.random() * (1.0 - 0.3) + 0.3; 
+                }
+            }
+
+            // Matriz Modelo (Posición y Escala)
+            identidad(MatrizModelo);
+            traslacion(MatrizModelo, sprite.x, sprite.y, 0);
+            
+            // Los peces ya miran hacia la izquierda, no se invierte su textura
+            let escalaX = sprite.ancho / 2;
+
+// 🐠 Los peces ya miran hacia la izquierda, no se voltean
+// 🦞 La langosta sí se da la vuelta al cambiar de dirección
+if (codigoTextura === codigoDeLangosta && sprite.direccionX === -1) {
+    escalaX *= -1; // invierte la textura cuando va hacia la izquierda
+}
+
+escalacion(MatrizModelo, escalaX, sprite.alto / 2, 1);
+
+
+            gl.uniformMatrix4fv(uMatrizModelo, false, MatrizModelo);
+
+            // Matriz Textura (Selección de Frame)
+            // Matriz Textura (Selección de Frame)
+// Matriz Textura (Selección de Frame)
+identidad(MatrizTextura);
+
+if (codigoTextura !== codigoDeBurbuja) { 
+    // Ajuste con margen para evitar mezclar píxeles de otros cuadros
+   // Margen muy pequeño para no cortar bordes visibles
+   let margen = 0.0005; // valor base seguro
+
+if (codigoTextura === codigoDePez) {
+    //  Pez amarillo (más justo)
+    margen = 0.0001;
+}
+else if (codigoTextura === codigoDePezDos) {
+    //  Pez rojo (marcos más ajustados)
+    margen = 0.0050;
+}
+else if (codigoTextura === codigoDePezTres) {
+    // 🟡 Pez verde (puede quedar intermedio)
+    margen = 0.035;
+}
+else if (codigoTextura === codigoDePezCuatro) {
+    // 🟡 Pez verde (puede quedar intermedio)
+    margen = 0.0050;
+}
+
+const anchoFrame = 1.0 / sprite.numFrames;
+const anchoSeguro = anchoFrame - 2.0 * margen;
+const desplazamiento = sprite.frameActual * anchoFrame + margen;
+
+    traslacion(MatrizTextura, desplazamiento, 0, 0);
+    escalacion(MatrizTextura, anchoSeguro, 1, 1);
+}
+
+gl.uniformMatrix4fv(uMatrizTextura, false, MatrizTextura);
+
+
+
+            // Dibujar
+            gl.activeTexture(gl.TEXTURE0);
+            gl.uniform1i(uUnidadDeTextura, 0);
+            gl.bindTexture(gl.TEXTURE_2D, codigoTextura); 
+
+            gl.bindVertexArray(rectanguloVAO);
+            gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+            gl.bindVertexArray(null);
+          }
+
+
+        function dibuja(tiempoActual) {
+          let deltaTiempo = (tiempoActual - tiempoAnterior) / 1000.0; 
+          tiempoAnterior = tiempoActual; 
+
+          gl.clear(gl.COLOR_BUFFER_BIT);
+
+          // ------------------------------------
+          // 🔹 DIBUJAR EL FONDO DEL OCÉANO
+          // ------------------------------------
+          identidad(MatrizModelo);
+          escalacion(MatrizModelo, 5, 5, 1); 
+          gl.uniformMatrix4fv(uMatrizModelo, false, MatrizModelo);
+
+          identidad(MatrizTextura); // No animación
+          gl.uniformMatrix4fv(uMatrizTextura, false, MatrizTextura);
+
+          gl.activeTexture(gl.TEXTURE0);
+          gl.uniform1i(uUnidadDeTextura, 0);
+          gl.bindTexture(gl.TEXTURE_2D, codigoDeFondo);
+
+          gl.bindVertexArray(rectanguloVAO);
+          gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+          gl.bindVertexArray(null);
+
+          // 🐠 DIBUJAR PEZ 1
+          dibujarSprite(pez, codigoDePez);
+
+          // 🐠 DIBUJAR PEZ 2
+          dibujarSprite(pezDos, codigoDePezDos);
+
+          // 🐠 DIBUJAR PEZ 3
+          dibujarSprite(pezTres, codigoDePezTres);
+          dibujarSprite(pezCuatro, codigoDePezCuatro);
+
+          // 🦀 DIBUJAR LANGOSTA
+          dibujarSprite(langosta, codigoDeLangosta);
+
+          // 🐚 DIBUJAR CONCHA
+          dibujarSprite(concha, codigoDeConcha);
+
+          // 🫧 DIBUJAR BURBUJAS
+          for (let i = 0; i < NUM_BURBUJAS; i++) {
+              dibujarSprite(burbujas[i], codigoDeBurbuja);
+          }
+
+
+          requestAnimationFrame(dibuja);
+        }
+
+        function main() {
+          let canvas = document.getElementById("webglcanvas");
+
+          gl = canvas.getContext("webgl2");
+          if (!gl) {
+               document.write("WebGL 2.0 no está disponible en tu navegador");
+               return;
+          }
+
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+          gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+          let shaderDeVertice = gl.createShader(gl.VERTEX_SHADER);
+          gl.shaderSource(shaderDeVertice, document.getElementById("vs").text.trim());
+          gl.compileShader(shaderDeVertice);
+
+          let shaderDeFragmento = gl.createShader(gl.FRAGMENT_SHADER);
+          gl.shaderSource(shaderDeFragmento, document.getElementById("fs").text.trim());
+          gl.compileShader(shaderDeFragmento);
+
+          programaID = gl.createProgram();
+          gl.attachShader(programaID, shaderDeVertice); 
+          gl.attachShader(programaID, shaderDeFragmento);
+          gl.linkProgram(programaID);
+
+          gl.useProgram(programaID);
+
+          uMatrizProyeccion = gl.getUniformLocation(programaID, "uMatrizProyeccion");
+          uMatrizVista = gl.getUniformLocation(programaID, "uMatrizVista");
+          uMatrizModelo = gl.getUniformLocation(programaID, "uMatrizModelo");
+          uUnidadDeTextura = gl.getUniformLocation(programaID, "uUnidadDeTextura");
+          uMatrizTextura = gl.getUniformLocation(programaID, "uMatrizTextura");
+
+          /* Coordenadas cartesianas (x, y) */
+          let vertices = [
+           -1, -1, //0
+            1, -1, //1
+            1,  1, //2
+           -1,  1  //3
+          ];
+
+          /* Coordenadas de textura (u, v) */
+          let coord_textura = [
+             0, 0,
+             1, 0,
+             1, 1,
+             0, 1,
+          ];
+          
+          rectanguloVAO = gl.createVertexArray();
+          gl.bindVertexArray(rectanguloVAO);
+
+          let codigoVertices = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, codigoVertices);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+          gl.enableVertexAttribArray(0);
+          gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+          let codigoCoordenadasDeTextura = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, codigoCoordenadasDeTextura);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(coord_textura), gl.STATIC_DRAW);
+          gl.enableVertexAttribArray(1);
+          gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0);
+
+          gl.bindVertexArray(null);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+          /***************************************************************************/
+          /* Lee las Texturas                                                        */
+          /***************************************************************************/
+
+          // Función para simplificar la carga de texturas (devuelve el código GL)
+          function cargarTextura(idImagen) {
+              let codigoTexturaLocal = gl.createTexture();
+              gl.bindTexture(gl.TEXTURE_2D, codigoTexturaLocal);
+              gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+              let imagen = document.getElementById(idImagen);
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imagen);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+              gl.bindTexture(gl.TEXTURE_2D, null);
+              return codigoTexturaLocal;
+          }
+
+          // Asignación de texturas para todos los sprites
+          codigoDePez = cargarTextura("imagenPez");
+          codigoDePezDos = cargarTextura("imagenPezDos");
+          codigoDePezTres = cargarTextura("imagenPezTres");
+          codigoDePezCuatro = cargarTextura("imagenPezCuatro");
+          codigoDeLangosta = cargarTextura("imagenLangosta");
+          codigoDeConcha = cargarTextura("imagenConcha"); 
+          codigoDeBurbuja = cargarTextura("imagenBurbuja"); 
+
+
+          // Cargar el fondo
+          codigoDeFondo = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, codigoDeFondo);
+          gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+          let imagenFondo = document.getElementById("imagenFondo");
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imagenFondo);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.bindTexture(gl.TEXTURE_2D, null);
+
+          // Inicializar burbujas
+          for (let i = 0; i < NUM_BURBUJAS; i++) {
+              burbujas.push({
+                  x: Math.random() * 10 - 5,      
+                  y: Math.random() * 10 - 5,      
+                  velocidadY: Math.random() * (0.8 - 0.3) + 0.3, 
+                  ancho: Math.random() * (1.0 - 0.3) + 0.3, 
+                  alto: Math.random() * (1.0 - 0.3) + 0.3,  
+                  direccionX: 1 
+              });
+          }
+
+
+          /***************************************************************************/
+          /* Paso 4: Se renderiza                                                    */
+          /***************************************************************************/
+
+          // Matriz de Proyección
+          ortho(MatrizProyeccion, -5, 5, -5, 5, -5, 5);
+          gl.uniformMatrix4fv(uMatrizProyeccion, false, MatrizProyeccion);
+
+          // Matriz de Vista
+          identidad(MatrizVista);
+          gl.uniformMatrix4fv(uMatrizVista, false, MatrizVista);           
+
+          gl.clearColor(0.0, 0.0, 0.0, 1.0);
+          tiempoAnterior = performance.now();
+          requestAnimationFrame(dibuja);
+
+        }
+
+        /* Llama a main una vez que la página web se haya cargado. */
+        window.onload = main;
+
+      </script>
+</body>
+</html>
