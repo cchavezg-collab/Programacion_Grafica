@@ -1,0 +1,210 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Visualizador 3D – Frutas</title>
+<style>
+    #menu{
+        position:absolute;
+        top:10px;
+        left:10px;
+        background:rgba(30,30,30,0.9);
+        padding:15px;
+        border-radius:10px;
+        color:white;
+        font-family:Arial;
+        z-index:10;
+        display:flex;
+        flex-direction:column;
+        gap:8px;
+    }
+    
+    #menu button{
+        padding:6px 12px;
+        border:none;
+        border-radius:5px;
+        background:#444;
+        color:white;
+        cursor:pointer;
+        text-align:left;
+    }
+    
+    #menu button:hover{
+        background:#777;
+    }
+    </style>
+</head>
+<body>
+    <script id="vs" type="vertex">
+        #version 300 es
+        precision mediump float;
+        uniform mat4 uMatrizProyeccion;
+        uniform mat4 uMatrizVista;
+        uniform mat4 uMatrizModelo;
+        uniform mat4 uMatrizTextura;
+        layout(location = 0) in vec2 aVertices;
+        layout(location = 1) in vec2 aCoordenadasDeTextura;
+        out vec2 vCoordenadasDeTextura;
+        void main() {
+            vCoordenadasDeTextura = (uMatrizTextura * vec4 (aCoordenadasDeTextura, 0.0, 1.0)).xy;
+            gl_Position = uMatrizProyeccion * uMatrizVista * uMatrizModelo * vec4(aVertices, 0.0, 1.0);
+        }
+      </script>
+
+      <script id="fs" type="fragment">
+        #version 300 es
+        precision mediump float;
+        uniform sampler2D uUnidadDeTextura;
+        in vec2 vCoordenadasDeTextura;
+        out vec4 color;
+        void main() {
+            color = texture(uUnidadDeTextura, vCoordenadasDeTextura); 
+        }
+      </script>
+    <div id="menu">
+        <strong>Frutas:</strong><br>
+        <button onclick="cargarFruta('manzana')">Manzana</button>
+        <button onclick="cargarFruta('pina')">Piña</button>
+        <button onclick="cargarFruta('uva')">Uva</button><br><br>
+    
+        <strong>Escala:</strong><br>
+        <button onclick="ajustarEscala(1.2)">Agrandar</button>
+        <button onclick="ajustarEscala(0.8)">Hacer más pequeña</button><br><br>
+    
+        <strong>Estilos:</strong><br>
+        <button onclick="toggleRotacion()">Rotación Automática</button>       
+        <button onclick="cambiarEstilo('random')">Color Aleatorio</button>
+    </div>
+
+<canvas id="webglcanvas"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.108.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.108.0/examples/js/loaders/OBJLoader.js"></script>
+
+<script>
+"use strict";
+
+let scene, camera, renderer;
+let frutaActual = null;
+let rotX=0, rotY=0, antX, antY, mousePresionado=false;
+let estilo = "solid";
+let autoRotate = true; // controla si el objeto rota automáticamente
+
+const canvas = document.getElementById("webglcanvas");
+
+// --------------------- Eventos mouse ---------------------
+canvas.addEventListener("mousedown", e=>{ mousePresionado=true; antX=e.clientX; antY=e.clientY; });
+canvas.addEventListener("mouseup", ()=>{ mousePresionado=false; });
+canvas.addEventListener("mousemove", e=>{
+    if(!mousePresionado) return;
+    const dx = e.clientX - antX;
+    const dy = e.clientY - antY;
+    rotY += dx*0.005;
+    rotX += dy*0.005;
+    antX = e.clientX; antY = e.clientY;
+});
+
+// --------------------- Inicialización ---------------------
+function init(){
+    renderer = new THREE.WebGLRenderer({canvas:canvas,antialias:true});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight,0.1,1000);
+    camera.position.z = 4;
+
+    // Luces
+    const luzAmb = new THREE.AmbientLight(0xffffff,0.3);
+    scene.add(luzAmb);
+    const luzDir = new THREE.DirectionalLight(0xffffff,1.5);
+    luzDir.position.set(5,5,5);
+    scene.add(luzDir);
+
+    // Cargar fruta inicial
+    cargarFruta("manzana");
+
+    animar();
+}
+
+// --------------------- Cargar OBJ sin MTL ---------------------
+function cargarFruta(nombre){
+    if(frutaActual){ scene.remove(frutaActual); frutaActual=null; }
+
+    const objLoader = new THREE.OBJLoader();
+    objLoader.setPath("./");
+
+    objLoader.load(nombre+".obj", obj=>{
+        frutaActual = obj;
+        obj.scale.set(1.2,1.2,1.2);
+        obj.position.set(0,0,0);
+
+        // Aplicar material por defecto
+        obj.traverse(child=>{
+            if(child.isMesh){
+                child.material = new THREE.MeshStandardMaterial({color:0xffffff});
+            }
+        });
+
+        aplicarEstilo();
+        scene.add(obj);
+    }, undefined, err=>console.error("Error cargando OBJ:", err));
+}
+
+// --------------------- Cambiar estilo ---------------------
+function cambiarEstilo(nuevo){
+    estilo = nuevo;
+    aplicarEstilo();
+}
+
+function aplicarEstilo(){
+    if(!frutaActual) return;
+    frutaActual.traverse(child=>{
+        if(child.isMesh){
+            if(estilo==="wire"){
+                child.material.wireframe = true;
+                child.material.color.set(0xffffff);
+            } else if(estilo==="random"){
+                child.material.wireframe = false;
+                child.material.color.set(Math.random()*0xffffff);
+            } else { // solid
+                child.material.wireframe = false;
+                child.material.color.set(0xffffff);
+            }
+            child.material.needsUpdate = true;
+        }
+    });
+}
+function ajustarEscala(factor){
+    if(!frutaActual) return;
+    frutaActual.scale.multiplyScalar(factor);
+}
+
+// --------------------- Loop ---------------------
+function animar(){
+    requestAnimationFrame(animar);
+
+    if (frutaActual) {
+        if(autoRotate){
+            rotY += 0.01; // incrementamos rotY en lugar de frutaActual.rotation.y directamente
+        }
+        // Aplicar rotación acumulada
+        frutaActual.rotation.y = rotY;
+        frutaActual.rotation.x = rotX;
+    }
+
+    renderer.render(scene,camera);
+}
+
+function toggleRotacion() {
+    autoRotate = !autoRotate;
+}
+
+
+window.onload = init;
+
+</script>
+</body>
+</html>
+
+
